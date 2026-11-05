@@ -413,15 +413,12 @@ impl BacktestEngine {
     ///   `aggregation_source` is not [`AggregationSource::External`].
     pub fn add_data(
         &mut self,
-        mut data: Vec<Data>,
+        data: Vec<Data>,
         client_id: Option<ClientId>,
         validate: bool,
         sort: bool,
     ) -> anyhow::Result<()> {
-        if sort {
-            data.sort_by_key(HasTsInit::ts_init);
-        }
-
+        // No sort here: the replay iterator stable-sorts every batch by the same key.
         let stream_name =
             self.register_added_data(data.iter().map(DataRef::from), client_id, validate)?;
         self.data_iterator.add_data(&stream_name, data, true);
@@ -515,6 +512,9 @@ impl BacktestEngine {
             self.add_defi_data_client_if_not_exists(client_id);
         }
 
+        let mut last_instrument: Option<InstrumentId> = None;
+        let mut last_venue: Option<Venue> = None;
+
         for item in items {
             count += 1;
             let ts = item.ts_init();
@@ -531,13 +531,19 @@ impl BacktestEngine {
             }
 
             let instr_id = item.instrument_id();
-            self.has_data.insert(instr_id);
+            if last_instrument != Some(instr_id) {
+                self.has_data.insert(instr_id);
+                last_instrument = Some(instr_id);
+            }
 
             if item.is_order_book_data() {
                 self.has_book_data.insert(instr_id);
             }
 
-            self.add_market_data_client_if_not_exists(instr_id.venue);
+            if last_venue != Some(instr_id.venue) {
+                self.add_market_data_client_if_not_exists(instr_id.venue);
+                last_venue = Some(instr_id.venue);
+            }
         }
 
         if let Some(ts) = batch_min_ts
