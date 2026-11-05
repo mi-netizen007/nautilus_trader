@@ -202,7 +202,13 @@ impl BookLadder {
         debug_assert_eq!(self.book_type, BookType::L1_MBP);
 
         let reusable_level = self.levels.pop_first().map(|(_, level)| level);
-        self.clear();
+        if self.levels.is_empty() {
+            // `BTreeMap::clear` frees the root node that the insert below would allocate again.
+            self.cache.clear();
+            self.batch_state = L1BatchState::None;
+        } else {
+            self.clear();
+        }
 
         if !order.size.is_positive() {
             let side = self.side;
