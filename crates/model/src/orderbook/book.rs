@@ -1289,14 +1289,29 @@ impl OrderBook {
     ///
     /// Returns an error if the book type is not `L1_MBP`.
     pub fn update_trade_tick(&mut self, trade: &TradeTick) -> Result<(), InvalidBookOperation> {
+        self.update_trade(trade.price, trade.size, trade.ts_event)
+    }
+
+    /// Updates L1 book state from a trade's price, size and event time, as
+    /// [`Self::update_trade_tick`] does. Only valid for `L1_MBP` book type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the book type is not `L1_MBP`.
+    pub fn update_trade(
+        &mut self,
+        price: Price,
+        size: Quantity,
+        ts_event: UnixNanos,
+    ) -> Result<(), InvalidBookOperation> {
         if self.book_type != BookType::L1_MBP {
             return Err(InvalidBookOperation::Update(self.book_type));
         }
 
-        if trade.ts_event < self.ts_last {
+        if ts_event < self.ts_last {
             log::warn!(
                 "Skipping stale trade: ts_event {} < ts_last {} (instrument_id={})",
-                trade.ts_event,
+                ts_event,
                 self.ts_last,
                 self.instrument_id
             );
@@ -1305,36 +1320,36 @@ impl OrderBook {
 
         // Prices can be zero or negative for certain instruments (options, spreads)
         debug_assert!(
-            !trade.price.is_undefined() && !trade.price.is_error(),
+            !price.is_undefined() && !price.is_error(),
             "Trade has invalid/uninitialized price: {}",
-            trade.price
+            price
         );
 
         // TradeTick enforces positive size at construction, but assert as sanity check
         debug_assert!(
-            trade.size.is_positive(),
+            size.is_positive(),
             "Trade has non-positive size: {}",
-            trade.size
+            size
         );
 
         let bid = BookOrder::new(
             OrderSide::Buy,
-            trade.price,
-            trade.size,
+            price,
+            size,
             OrderSide::Buy as u64,
         );
 
         let ask = BookOrder::new(
             OrderSide::Sell,
-            trade.price,
-            trade.size,
+            price,
+            size,
             OrderSide::Sell as u64,
         );
 
         self.update_book_bid(bid);
         self.update_book_ask(ask);
 
-        self.increment(self.sequence.saturating_add(1), trade.ts_event, 0);
+        self.increment(self.sequence.saturating_add(1), ts_event, 0);
 
         Ok(())
     }

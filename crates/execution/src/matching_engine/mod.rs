@@ -2084,12 +2084,17 @@ impl OrderMatchingEngine {
             }
         }
 
+        let idle = self.collapse_bar_trades && self.last_trade_size.is_none();
         self.collapse_bar_trades = false;
 
         if let Some((price, size, aggressor_side)) = self.last_bar_trade.take() {
             // A zero size close sets `core.last` without a trade tick, so keep it
             let last = self.core.last;
-            self.process_bar_trade_tick(bar, price, size, aggressor_side, "bar trade tick");
+            if idle {
+                self.apply_idle_bar_trade(bar, price, size);
+            } else {
+                self.process_bar_trade_tick(bar, price, size, aggressor_side, "bar trade tick");
+            }
             self.core.last = last;
         }
 
@@ -2166,6 +2171,29 @@ impl OrderMatchingEngine {
         self.core.set_last_raw(price);
         self.iterate(trade_tick.ts_init, AggressorSide::NoAggressor);
         true
+    }
+
+    // With nothing to match, the trade tick only moves the L1 book, `core.last` and the
+    // trade ID counter, and `iterate` only resets `core` bid/ask from the book
+    fn apply_idle_bar_trade(&mut self, bar: &Bar, price: Price, size: Quantity) {
+        if price != bar.open {
+            self.fill_at_market = false;
+        }
+
+        self.ids_generator.skip_trade_id();
+
+        if let Err(e) = self.book.update_trade(price, size, bar.ts_init) {
+            log::warn!(
+                "Skipping bar trade tick for {}: update_trade_tick failed: {e}",
+                bar.instrument_id(),
+            );
+            return;
+        }
+
+        self.reset_trade_liquidity(bar.ts_init);
+        self.core.set_last_raw(price);
+        self.core.bid = self.book.best_bid_price();
+        self.core.ask = self.book.best_ask_price();
     }
 
     fn process_quote_ticks_from_bar(&mut self) {
